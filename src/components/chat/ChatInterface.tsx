@@ -4,71 +4,75 @@ import { useApp } from '../../contexts/AppContext';
 import { MessageBubble } from './MessageBubble';
 import { Button } from '../ui/Button';
 import { Send, Trash2 } from 'lucide-react-native';
-import { generateStudyData } from '../../services/gemini';
+import { generateStudyDataSecure } from '../../services/api';
 import { Message } from '../../types';
 
 interface ChatInterfaceProps {
-    onOpenGate: (messageId: string) => void;
+  onOpenGate: (messageId: string) => void;
 }
 
 export function ChatInterface({ onOpenGate }: ChatInterfaceProps) {
-    const { messages, addMessage, clearMessages } = useApp();
-    const [input, setInput] = useState('');
-    const [isLoading, setIsLoading] = useState(false);
-    const scrollViewRef = useRef<ScrollView>(null);
+  const { messages, addMessage, clearMessages } = useApp();
+  const [input, setInput] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
+  const scrollViewRef = useRef<ScrollView>(null);
 
-    const scrollToBottom = () => {
-        scrollViewRef.current?.scrollToEnd({ animated: true });
+  const scrollToBottom = () => {
+    scrollViewRef.current?.scrollToEnd({ animated: true });
+  };
+
+  useEffect(() => {
+    scrollToBottom();
+  }, [messages]);
+
+  const handleSubmit = async () => {
+    if (!input.trim() || isLoading) return;
+
+    const userMessage: Message = {
+      id: Date.now().toString(),
+      role: 'user',
+      content: input.trim(),
+      locked: false,
+      timestamp: new Date(),
     };
 
-    useEffect(() => {
-        scrollToBottom();
-    }, [messages]);
+    addMessage(userMessage);
+    const currentInput = input.trim();
+    setInput('');
+    setIsLoading(true);
 
-    const handleSubmit = async () => {
-        if (!input.trim() || isLoading) return;
+    try {
+      // Use the topic as the input itself (AI extracts topic from the question)
+      const response = await generateStudyDataSecure(currentInput, currentInput);
 
-        const userMessage: Message = {
-            id: Date.now().toString(),
-            role: 'user',
-            content: input.trim(),
-            locked: false,
-            timestamp: new Date(),
-        };
+      const assistantMessage: Message = {
+        id: Date.now().toString(),
+        role: 'assistant',
+        content: response.answer,
+        locked: true,
+        timestamp: new Date(),
+        humanizedContent: response.humanized,
+        studyData: response,
+      };
 
-        addMessage(userMessage);
-        const currentInput = input;
-        setInput('');
-        setIsLoading(true);
+      addMessage(assistantMessage);
+    } catch (error: any) {
+      const isAccessError = error?.message?.includes('Quiz not passed');
+      const errorMessage: Message = {
+        id: Date.now().toString(),
+        role: 'assistant',
+        content: isAccessError
+          ? '🔒 You need to pass the comprehension quiz for this topic before the AI can respond.'
+          : `Sorry, I couldn't process that. ${error?.message ?? 'Please try again.'}`,
+        locked: false,
+        timestamp: new Date(),
+      };
+      addMessage(errorMessage);
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
-        try {
-            const response = await generateStudyData(currentInput);
-
-            const assistantMessage: Message = {
-                id: Date.now().toString(),
-                role: 'assistant',
-                content: response.answer,
-                locked: true,
-                timestamp: new Date(),
-                humanizedContent: response.humanized,
-                studyData: response,
-            };
-
-            addMessage(assistantMessage);
-        } catch (error) {
-            console.error("ChatInterface Error:", error);
-            const errorMessage: Message = {
-                id: Date.now().toString(),
-                role: 'assistant',
-                content: "Sorry, I couldn't process that. Please check your Gemini API key in `src/services/gemini.ts`.",
-                locked: false,
-                timestamp: new Date(),
-            };
-            addMessage(errorMessage);
-        } finally {
-            setIsLoading(false);
-        }
-    };
 
     const suggestedQuestions = ['Explain photosynthesis', "Newton's First Law", 'What is gravity?'];
 

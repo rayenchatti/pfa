@@ -9,6 +9,8 @@ import { StudyMaterials } from '../components/quiz/StudyMaterials';
 import { Dialog, DialogContent } from '../components/ui/Dialog';
 import { useApp } from '../contexts/AppContext';
 import { getFallbackResponse, StudyData } from '../utils/mockData';
+import { submitQuizToBackend } from '../services/api';
+import { Question } from '../types';
 
 type ModalState = 'closed' | 'gate' | 'quiz' | 'results' | 'study';
 
@@ -19,15 +21,15 @@ export function ChatPage() {
     const [currentStudyData, setCurrentStudyData] = useState<StudyData | null>(null);
     const [quizScore, setQuizScore] = useState({ correct: 0, total: 0, points: 0 });
     const [isRetry, setIsRetry] = useState(false);
+    const [activeQuestions, setActiveQuestions] = useState<Question[]>([]);
 
     const handleOpenGate = useCallback((messageId: string) => {
         setCurrentMessageId(messageId);
         const assistantMessage = messages.find(m => m.id === messageId);
-        
+
         if (assistantMessage && assistantMessage.studyData) {
             setCurrentStudyData(assistantMessage.studyData);
         } else {
-            // Fallback for older hardcoded messages
             const messageIndex = messages.findIndex(m => m.id === messageId);
             if (messageIndex > 0) {
                 const userQuestion = messages[messageIndex - 1].content;
@@ -48,30 +50,49 @@ export function ChatPage() {
     }, [currentMessageId, updateMessage, addScore]);
 
     const handleLearn = useCallback(() => {
+        if (currentStudyData) {
+            const questions = isRetry ? currentStudyData.easyQuiz : currentStudyData.quiz;
+            setActiveQuestions(questions);
+        }
         setModalState('quiz');
-    }, []);
+    }, [currentStudyData, isRetry]);
 
-    const handleQuizComplete = useCallback((correct: number, total: number) => {
-        const percentage = correct / total;
-        const passed = percentage >= 0.7; // Fixed 70% threshold
-        const points = passed ? (isRetry ? 30 : 50) : 0;
+    const handleQuizComplete = useCallback(async (correct: number, total: number, userAnswers: number[]) => {
+        try {
+            const topic = currentStudyData?.topic ?? 'Unknown';
+            const questions = activeQuestions;
 
-        setQuizScore({ correct, total, points });
+            // Submit to backend: server validates, scores, and unlocks chat_access
+            const result = await submitQuizToBackend(topic, userAnswers, questions, isRetry);
 
-        if (passed && currentMessageId) {
-            updateMessage(currentMessageId, {
-                locked: false,
-                unlocked: true
-            });
-            addScore(points, `Passed quiz${isRetry ? ' (retry)' : ''}: ${correct}/${total} correct`);
-            updateStats({
-                questionsAnswered: stats.questionsAnswered + 1,
-                quizPassRate: Math.round(((stats.quizPassRate * stats.questionsAnswered + 100) / (stats.questionsAnswered + 1)))
-            });
+            setQuizScore({ correct: result.score, total: result.total, points: result.pointsEarned });
+
+            if (result.passed && currentMessageId) {
+                updateMessage(currentMessageId, { locked: false, unlocked: true });
+                addScore(result.pointsEarned, `Passed quiz${isRetry ? ' (retry)' : ''}: ${result.score}/${result.total} correct`);
+                updateStats({
+                    questionsAnswered: stats.questionsAnswered + 1,
+                    quizPassRate: Math.round(
+                        ((stats.quizPassRate * stats.questionsAnswered + 100) / (stats.questionsAnswered + 1))
+                    ),
+                });
+            }
+        } catch (err: any) {
+            console.error('Quiz submission error:', err);
+            // Fallback: use client-side scoring if backend fails
+            const percentage = correct / total;
+            const passed = percentage >= 0.7;
+            const points = passed ? (isRetry ? 30 : 50) : 0;
+            setQuizScore({ correct, total, points });
+            if (passed && currentMessageId) {
+                updateMessage(currentMessageId, { locked: false, unlocked: true });
+                addScore(points, `Passed quiz (offline): ${correct}/${total}`);
+            }
         }
 
         setModalState('results');
-    }, [isRetry, currentMessageId, updateMessage, addScore, updateStats, stats]);
+    }, [isRetry, currentMessageId, currentStudyData, activeQuestions, updateMessage, addScore, updateStats, stats]);
+
 
     const handleRetry = useCallback(() => {
         setIsRetry(true);

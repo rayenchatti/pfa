@@ -3,6 +3,8 @@ import { TierType, Message, UserStats, Activity, Question } from '../types';
 import { getTier } from '../utils/tiers';
 import { saveScore, loadScore, saveActivities, loadActivities } from '../utils/storage';
 import { DEMO_STATS } from '../utils/mockData';
+import { supabase } from '../services/supabase';
+import { fetchUserStats } from '../services/api';
 
 interface AppState {
     score: number;
@@ -40,16 +42,27 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const [scorePopup, setScorePopup] = useState<{ show: boolean; points: number } | null>(null);
     const [isLoadingStore, setIsLoadingStore] = useState(true);
 
-    // Initial load from AsyncStorage
+    // Initial load: try Supabase first, fall back to AsyncStorage
     useEffect(() => {
         async function fetchInitialData() {
             try {
                 const loadedScore = await loadScore();
                 setScore(loadedScore);
                 setTier(getTier(loadedScore));
-                
+
                 const loadedActivities = await loadActivities();
                 setActivities(loadedActivities as Activity[]);
+
+                // Try to load real stats from Supabase if logged in
+                const { data: { session } } = await supabase.auth.getSession();
+                if (session?.user?.id) {
+                    const serverStats = await fetchUserStats(session.user.id);
+                    if (serverStats) {
+                        setStats(serverStats);
+                        setScore(serverStats.totalXP ?? loadedScore);
+                        setTier(getTier(serverStats.totalXP ?? loadedScore));
+                    }
+                }
             } finally {
                 setIsLoadingStore(false);
             }
