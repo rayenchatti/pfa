@@ -1,7 +1,5 @@
 import { StudyData } from '../utils/mockData';
-
-// Replace with your actual Gemini API Key from Google AI Studio
-export const GEMINI_API_KEY = "AIzaSyBpkOxakLWJ5BPii_stdkVuT5cgot1oZdY";
+import { GEMINI_API_KEY } from '../config/keys';
 
 export async function generateStudyData(prompt: string, apiKey: string = GEMINI_API_KEY): Promise<StudyData> {
     if (!apiKey || apiKey === "YOUR_API_KEY_HERE") {
